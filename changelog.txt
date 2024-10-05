@@ -1,0 +1,433 @@
+;Done:
+;Start with Copyright and GameFreak Logo/Skip Nidorino Animation/Skip Title Screen and go directly to the naming Player screen.
+;Ask name and copy it to MEW OT.
+
+;Start Loop
+;Display static image of the trade. (Display MEW, OT, ID)
+;Wait to Press A.
+;Show half of the animation of trade until MEW went to TRAINER.
+;Display the "Take care of MEW" text and Change ID + 1
+;End Loop
+
+;display wPlayerName (of the save file) during the trade animation
+
+;To do:
+;Inject the Mew shown on screen to any save file
+
+;In order of changes:
+;intro.asm
+;title.asm
+;oak_speech.asm
+;trade.asm
+;text_2.asm
+;trade2.asm
+
+;Skipped Nidorino Animation by rewriting ";" on intro.asm:
+PlayIntro:
+	xor a
+	ldh [hJoyHeld], a
+	inc a
+	ldh [hAutoBGTransferEnabled], a
+	call PlayShootingStar
+;	call PlayIntroScene			this skips the Nidorino animation
+	call GBFadeOutToWhite
+	xor a
+	ldh [hSCX], a
+	ldh [hAutoBGTransferEnabled], a
+	call ClearSprites
+	call DelayFrame
+	ret
+
+;Title Screen now redirects directly to Debug option selected on title.asm:
+DisplayTitleScreen:
+	call LoadFontTilePatterns			;this loads all the tiles to show all the letters while naming a Player
+	call LoadHpBarAndStatusTilePatterns
+	call ClearSprites
+	call RunDefaultPaletteCommand
+	ld hl, wd732			;this redirects as if you had choose SELECT and press "Debug"
+	set 1, [hl]
+	jp StartNewGameDebug
+	
+....
+SonyText:   db "TRAINER@" ;change wRivalName to TRAINER as a temporal solution
+
+;MEW OT is now custom on oak_speech.asm:
+SetDefaultNames: ;this loads the save file info, it's just a copy from main_menu.asm
+	call InitOptions
+	xor a
+	ld [wOptionsInitialized], a
+	inc a
+	ld [wSaveFileStatus], a
+	call CheckForPlayerNameInSRAM
+
+	predef LoadSAV 
+.customName
+	ld hl, wTradedEnemyMonOT ;this sets up the OT name
+	xor a ; NAME_PLAYER_SCREEN
+	ld [wNamingScreenType], a
+	call DisplayNamingScreen
+	ld a, [wStringBuffer]
+	cp "@"
+	jr z, .customName
+	call ClearScreen
+	call Delay3
+	call Random
+	ldh a, [hRandomSub]
+	ld [wTradedEnemyMonOTID], a ;this sets the inital ID of MEW to random
+
+	call Random
+	ldh a, [hRandomAdd]
+	ld [wTradedEnemyMonOTID + 1], a ;this sets the inital ID of MEW to random
+	ld hl, wd730
+	set 6, [hl]
+	ld a, [wSaveFileStatus]
+	cp 1
+	ret
+	
+;Music is changed now to trade music on oak_speech.asm, as well as some other stuff to don't clear the save file data:
+OakSpeech:
+	ld a, SFX_STOP_ALL_MUSIC
+	call PlaySound
+	ld a, BANK(Music_SafariZone)
+	ld [wAudioSavedROMBank], a
+	ld a, MUSIC_SAFARI_ZONE
+	call PlayMusic
+	call ClearScreen
+	call LoadTextBoxTilePatterns
+	call SetDefaultNames ;some stuff is removed to don't overwrite the save file
+;	predef InitPlayerData2
+;	ld hl, wNumBoxItems
+;	ld a, POTION
+;	ld [wcf91], a
+;	ld a, 1
+;	ld [wItemQuantity], a
+;	call AddItemToInventory  ; give one potion
+	ld a, [wDefaultMap]
+	ld [wDestinationMap], a
+	call SpecialWarpIn
+	xor a
+	ldh [hTileAnimations], a
+	ld a, [wd732]
+	bit 1, a ; possibly a debug mode bit
+	jp z, .skipChoosingNames
+	
+;Mew Trade now displays after naming screen and it does a loop on oak_speech.asm:
+.skipChoosingNames
+	ld a, MEW		;before loading the trading animation, sets up MEW as the pokemon transfered
+	ld [wTradingWhichEnemyMon], a
+	ld a, 5			;set MEW to level 5 though this is not used in any way ccurrently
+	ld [wCurEnemyLVL], a
+	call LoadHpBarAndStatusTilePatterns		;this load the tiles to display the text box correctly
+
+	predef InternalClockTradeAnim ;this loads the trade animation and makes it an eternal loop
+	
+	jr .skipChoosingNames
+
+;One Side trade animation until MEW is received to TRAINER on trade.asm:
+InternalClockTradeFuncSequence:
+	tradefunc LoadTradingGFXAndMonNames
+	tradefunc Trade_ShowPlayerMon
+	tradefunc Trade_DrawOpenEndOfLinkCable
+	tradefunc Trade_AnimateBallEnteringLinkCable
+	tradefunc Trade_AnimRightToLeft
+	tradefunc Trade_Delay100
+	tradefunc Trade_ShowClearedWindow
+	tradefunc Trade_DrawOpenEndOfLinkCable
+	tradefunc Trade_ShowEnemyMon
+	tradefunc Trade_SlideTextBoxOffScreen
+	tradefunc Trade_Delay100
+	tradefunc Trade_Cleanup
+	db -1 ; end
+
+;Wait to press A to sent MEW on trade.asm:
+Trade_ShowPlayerMon:
+	ld a, %10101011
+	ldh [rLCDC], a
+	ld a, $50
+	ldh [hWY], a
+	ld a, $86
+	ldh [rWX], a
+	ldh [hSCX], a
+	xor a
+	ldh [hAutoBGTransferEnabled], a
+	hlcoord 5, 0
+	ld b, 6
+	ld c, 10
+	call TextBoxBorder
+	call Trade_PrintPlayerMonInfoText
+	ld b, HIGH(vBGMap0)
+	call CopyScreenTileBufferToVRAM
+	call ClearScreen
+	ld a, [wTradedEnemyMonSpecies] ;changes to display MEW as TradedEnemyMon
+	call Trade_LoadMonSprite
+	ld a, $7e
+.slideScreenLoop
+	push af
+	call DelayFrame
+	pop af
+	ldh [rWX], a
+	ldh [hSCX], a
+	dec a
+	dec a
+	and a
+	jr nz, .slideScreenLoop
+.waitForButtonPress		;this makes the game stop until A_BUTTON is Pressed
+	call JoypadLowSensitivity
+	ldh a, [hJoy5]
+	and A_BUTTON
+	jr z, .waitForButtonPress
+	call Trade_Delay80
+	ld a, TRADE_BALL_POOF_ANIM
+	call Trade_ShowAnimation
+	ld a, TRADE_BALL_DROP_ANIM
+	call Trade_ShowAnimation ; clears mon pic
+	ld a, [wTradedEnemyMonSpecies]  ;changes to play MEW cry
+	call PlayCry
+	xor a
+	ldh [hAutoBGTransferEnabled], a
+	ret
+	
+;this displays the name of the Player in the save file
+Trade_DrawLeftGameboy:
+.......
+; draw text box with player name below gameboy pic
+	hlcoord 4, 12
+	ld b, 2
+	ld c, 7
+	call TextBoxBorder
+	hlcoord 5, 14
+	ld de, wPlayerName
+	call PlaceString
+
+;this displays the current OT to the trading animation at trade.asm:
+Trade_DrawRightGameboy:
+.......
+; draw text box with enemy name above link cable
+	hlcoord 6, 0
+	ld b, 2
+	ld c, 7
+	call TextBoxBorder
+	hlcoord 7, 2
+	ld de, wTradedEnemyMonOT
+	call PlaceString
+
+;Trade_ShowEnemyMon now shows MEW on trade.asm:
+Trade_ShowEnemyMon:
+	ld a, TRADE_BALL_TILT_ANIM
+	call Trade_ShowAnimation
+	call Trade_ShowClearedWindow
+	hlcoord 4, 10
+	ld b, 6
+	ld c, 10
+	call TextBoxBorder
+	call Trade_PrintEnemyMonInfoText
+	call Trade_CopyTileMapToVRAM
+	call Trade_CopyTileMapToVRAM
+	ld a, $1
+	ldh [hAutoBGTransferEnabled], a
+	ld a, [wTradedEnemyMonSpecies]
+	call Trade_LoadMonSprite
+	ld a, TRADE_BALL_POOF_ANIM
+	call Trade_ShowAnimation
+	ld a, $1
+	ldh [hAutoBGTransferEnabled], a
+	ld a, [wTradedEnemyMonSpecies]
+	call PlayCry
+	call Trade_Delay100
+	hlcoord 4, 10
+	lb bc, 8, 12
+	call ClearScreenArea
+	call AddEnemyMonToPlayerParty ;this is temporal until know how to properly add a MEW (until 5 slots are full)
+	predef SaveSAVtoSRAM2 ;this saves the added Pokémon into the save file 
+	jp PrintTradeTakeCareText
+
+;After TakeCareText now increments by 1 the ID at trade.asm:
+PrintTradeTakeCareText:
+	ld hl, TradeTakeCareText
+	call PrintText
+	ld a, [wTradedEnemyMonOTID + 1]
+	add 1			;this adds 1 to the ID
+	ld [wTradedEnemyMonOTID + 1], a
+	ld a, [wTradedEnemyMonOTID]
+	adc 0			;this handles when ID is greater than 255 or when 65535 is reached so it sets again to 0
+	ld [wTradedEnemyMonOTID], a
+	jp Trade_Delay80
+
+;trade2.asm has changed a lot to display Mew and the text as close as possible to the footage, and to make the trade animation display as intended:
+Trade_PrintPlayerMonInfoText:
+	hlcoord 6, 0
+	ld de, Trade_MonInfoText
+	call PlaceString
+	ld a, [wTradedEnemyMonSpecies] ;most info was changed to display MEW
+	ld [wd11e], a
+	predef IndexToPokedex
+	hlcoord 11, 0
+	ld de, wd11e 
+	lb bc, LEADING_ZEROES | 1, 3
+	call PrintNumber
+	hlcoord 6, 2
+	ld de, wcd6d  ;most info was changed to display MEW
+	call PlaceString
+	hlcoord 9, 4
+	ld de, wTradedEnemyMonOT ;most info was changed to display MEW
+	call PlaceString
+	hlcoord 10, 6
+	ld de, wTradedEnemyMonOTID ;most info was changed to display MEW
+	lb bc, LEADING_ZEROES | 2, 5
+	jp PrintNumber
+
+Trade_PrintEnemyMonInfoText:
+	hlcoord 5, 10
+	ld de, Trade_MonInfoText
+	call PlaceString
+	ld a, [wTradedEnemyMonSpecies]
+	ld [wd11e], a
+	predef IndexToPokedex
+	hlcoord 10, 10
+	ld de, wd11e
+	lb bc, LEADING_ZEROES | 1, 3
+	call PrintNumber
+	hlcoord 5, 12
+	ld de, wcd6d
+	call PlaceString
+	hlcoord 8, 14
+	ld de, wTradedEnemyMonOT
+	call PlaceString
+	hlcoord 9, 16
+	ld de, wTradedEnemyMonOTID
+	lb bc, LEADING_ZEROES | 2, 5
+	jp PrintNumber
+
+Trade_MonInfoText:
+	db   "───№<DOT>"
+	next ""
+	next "OT/"
+	next " <ID>№0@"
+	
+;2 years later, I've figured out how to add the name in trade.asm:
+
+	ld a, [wTradedEnemyMonSpecies]
+	ld [wd11e], a
+	call GetMonName
+	ld hl, wcd6d
+	ld de, wEnemyMonNicks
+	ld bc, NAME_LENGTH
+	call CopyData
+	ld hl, wTradedEnemyMonOT
+	ld de, wEnemyMonOT
+	ld bc, NAME_LENGTH
+	call CopyData
+
+;on oak_speech.asm, instead of going to the Oak speech, it displays a file data empty message and resets the machine:
+
+	jp z, .skipChoosingNames
+	ld hl, SaveEmptyText
+	call PrintText
+	callfar SoftReset
+	
+.......	
+	
+SaveEmptyText:
+	text_far _FileDataDestroyedText
+	text_end
+
+;after this, the first line of text_3.asm is replaced:
+_FileDataDestroyedText::
+	text "The file data is"
+	line "empty."
+	prompt
+	
+;this is more advanced edits in trade.asm, now it distributes Mew without any further issues:
+
+;	ld a, 5
+	ld [wLoadedMonLevel], a
+	ld de, wcd6d
+	ld bc, $1
+	call CopyData
+	ld a, 25
+	ld [wLoadedMonMaxHP + 1], a
+	ld de, wcd6d
+	ld bc, $4
+	call CopyData
+	ld a, 25
+	ld [wLoadedMonHP + 1], a
+	ld de, wcd6d
+	ld bc, $4
+	call CopyData
+	ld a, 16
+	ld [wLoadedMonAttack + 1], a
+	ld de, wcd6d
+	ld bc, $1
+	call CopyData
+	ld a, 15
+	ld [wLoadedMonDefense + 1], a
+	ld de, wcd6d
+	ld bc, $1
+	call CopyData
+	ld a, 16
+	ld [wLoadedMonSpeed + 1], a
+	ld de, wcd6d
+	ld bc, $1
+	call CopyData
+	ld a, 15
+	ld [wLoadedMonSpecial + 1], a
+	ld de, wcd6d
+	ld bc, $1
+	call CopyData	
+	ld a, 135
+	ld [wLoadedMonExp + 2], a
+	ld de, wcd6d
+	ld bc, $1
+	call CopyData
+	ld a, 45
+	ld [wLoadedMonCatchRate], a
+	ld de, wcd6d
+	ld bc, $1
+	call CopyData
+	ld a, MEW	
+	ld [wLoadedMonSpecies], a
+	ld de, wcd6d
+	ld bc, $1
+	call CopyData
+	
+	ld a, %10100001
+	ld [wLoadedMonDVs], a
+	ld de, wcd6d
+	ld bc, NAME_LENGTH
+	call CopyData
+	
+	ld a, %11000101	
+	ld [wLoadedMonDVs + 1], a
+	ld de, wcd6d
+	ld bc, NAME_LENGTH
+	call CopyData
+	
+	ld a, POUND
+	ld [wLoadedMonMoves], a
+	ld de, wcd6d
+	ld bc, NUM_MOVES
+	call CopyData
+	ld a, 35
+	ld [wLoadedMonPP], a
+	ld de, wcd6d
+	ld bc, NUM_MOVES
+	call CopyData
+	ld hl, wTradedEnemyMonOTID
+	ld de, wLoadedMonOTID
+	ld bc, $2
+	call CopyData
+	ld a, [wTradedEnemyMonSpecies]
+	ld [wd11e], a
+	call GetMonName
+	ld hl, wcd6d
+	ld de, wEnemyMonNicks
+	ld bc, NAME_LENGTH
+	call CopyData
+	ld hl, wTradedEnemyMonOT
+	ld de, wEnemyMonOT
+	ld bc, NAME_LENGTH
+	call CopyData
+
+	call AddEnemyMonToPlayerParty
+	predef SaveSAVtoSRAM2
+	jp PrintTradeTakeCareText
